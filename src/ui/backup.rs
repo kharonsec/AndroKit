@@ -1,9 +1,10 @@
 use super::{Action, AppState};
+use crate::state::PendingAction;
 use egui::{Color32, RichText};
 
 pub fn render(
     ui: &mut egui::Ui,
-    state: &AppState,
+    state: &mut AppState,
     action: &mut Option<Action>,
     disable_actions: bool,
 ) {
@@ -18,17 +19,41 @@ pub fn render(
                 ui.label(RichText::new("Backup").strong());
             });
             ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("Partitions:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.backup_partitions)
+                        .hint_text("boot,recovery,dtbo")
+                        .desired_width(260.0),
+                );
+            });
+            ui.checkbox(&mut state.encrypt_backup, "Encrypt backup with AES-256-GCM");
+            if state.encrypt_backup {
+                ui.horizontal(|ui| {
+                    ui.label("Passphrase:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.backup_passphrase)
+                            .password(true)
+                            .desired_width(200.0),
+                    );
+                });
+            }
+            ui.add_space(4.0);
             ui.add_enabled_ui(has_adb && !disable_actions, |ui| {
-                if ui.button("Backup Critical Partitions").clicked() {
+                if ui.button("Backup Partitions").clicked() {
                     *action = Some(Action::BackupPartitions);
                 }
                 if ui.button("Full NAND Backup").clicked() {
                     *action = Some(Action::FullNandBackup);
                 }
             });
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut false, "Encrypt backup with AES-256");
-            });
+            if !has_adb {
+                ui.label(
+                    RichText::new("Connect a device in ADB/recovery mode.")
+                        .small()
+                        .color(Color32::GRAY),
+                );
+            }
         });
 
         ui.add_space(10.0);
@@ -37,11 +62,22 @@ pub fn render(
                 ui.label(RichText::new("Restore").strong());
             });
             ui.separator();
-            ui.add_enabled_ui(has_adb && !disable_actions, |ui| {
-                if ui.button("Restore from Backup").clicked() {
+            ui.label(
+                RichText::new("Restores .img / .img.enc files from a backup folder via fastboot.")
+                    .small(),
+            );
+            ui.add_enabled_ui(has_fastboot && !disable_actions, |ui| {
+                if ui.button("Restore from Backup Folder").clicked() {
                     *action = Some(Action::RestoreBackup);
                 }
             });
+            if !has_fastboot {
+                ui.label(
+                    RichText::new("Restore requires fastboot mode.")
+                        .small()
+                        .color(Color32::GRAY),
+                );
+            }
         });
 
         ui.add_space(10.0);
@@ -50,6 +86,12 @@ pub fn render(
                 ui.label(RichText::new("Forensic").strong());
             });
             ui.separator();
+            ui.label(
+                RichText::new(
+                    "Read-only pull of boot/recovery/dtbo/vbmeta with a SHA-256 manifest.",
+                )
+                .small(),
+            );
             ui.add_enabled_ui(has_adb && !disable_actions, |ui| {
                 if ui.button("Forensic Dump (Read-Only)").clicked() {
                     *action = Some(Action::ForensicDump);
@@ -68,11 +110,11 @@ pub fn render(
             });
             ui.separator();
             ui.add_enabled_ui((has_fastboot || has_adb) && !disable_actions, |ui| {
-                if ui.button("Quick Wipe (userdata + cache)").clicked() {
-                    *action = Some(Action::QuickWipe);
+                if ui.button("Quick Wipe (userdata)").clicked() {
+                    *action = Some(Action::Confirm(PendingAction::QuickWipe));
                 }
-                if ui.button("Secure Wipe (DoD 5220.22-M)").clicked() {
-                    *action = Some(Action::SecureWipe);
+                if ui.button("Secure Wipe (overwrite userdata)").clicked() {
+                    *action = Some(Action::Confirm(PendingAction::SecureWipe));
                 }
             });
         });

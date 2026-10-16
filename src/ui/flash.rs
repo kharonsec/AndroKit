@@ -1,10 +1,10 @@
 use super::{Action, AppState};
-use crate::config::{load_profile, FlashProfile};
+use crate::config::load_profile;
 use egui::{Color32, RichText};
 
 pub fn render(
     ui: &mut egui::Ui,
-    state: &AppState,
+    state: &mut AppState,
     action: &mut Option<Action>,
     disable_actions: bool,
 ) {
@@ -14,41 +14,33 @@ pub fn render(
         || state.device_mode == "sideload";
     let is_sideload = state.device_mode == "sideload";
 
-    ui.horizontal(|ui| {
-        egui::SidePanel::left("flash_profiles")
-            .resizable(true)
-            .default_width(180.0)
-            .width_range(140.0..=300.0)
-            .show_inside(ui, |ui| {
-                render_profiles(ui, action);
-            });
+    egui::SidePanel::left("flash_profiles")
+        .resizable(true)
+        .default_width(190.0)
+        .width_range(150.0..=320.0)
+        .show_inside(ui, |ui| {
+            render_profiles(ui, state, action);
+        });
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                render_fastboot_ops(ui, is_fastboot, disable_actions, action);
-                ui.add_space(10.0);
-                render_adb_ops(ui, is_adb, is_sideload, disable_actions, action);
-                ui.add_space(10.0);
-                render_batch_panel(ui, state, is_fastboot || is_adb, disable_actions, action);
-                ui.add_space(20.0);
-                ui.label(
-                    RichText::new("Coming in Phase 3")
-                        .strong()
-                        .color(Color32::GRAY),
-                );
-                ui.label("  Auto-download firmware/TWRP/Magisk");
-            });
+    egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            render_fastboot_ops(ui, state, is_fastboot, disable_actions, action);
+            ui.add_space(10.0);
+            render_adb_ops(ui, is_adb, is_sideload, disable_actions, action);
+            ui.add_space(10.0);
+            render_batch_panel(ui, state, is_fastboot || is_adb, disable_actions);
         });
     });
 }
 
-fn render_profiles(ui: &mut egui::Ui, _action: &mut Option<Action>) {
+fn render_profiles(ui: &mut egui::Ui, state: &mut AppState, action: &mut Option<Action>) {
     ui.vertical_centered(|ui| {
         ui.label(RichText::new("Flash Profiles").strong());
     });
     ui.separator();
 
     let profiles_dir = dirs_profiles();
+    let mut loaded_msg: Option<(String, Color32)> = None;
     if let Ok(entries) = std::fs::read_dir(&profiles_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -59,23 +51,39 @@ fn render_profiles(ui: &mut egui::Ui, _action: &mut Option<Action>) {
                     .to_string_lossy()
                     .to_string();
                 if ui.button(&name).clicked() {
-                    if let Ok(profile) = load_profile(&path.to_string_lossy()) {
-                        ui.ctx().memory_mut(|mem| {
-                            mem.data.insert_temp::<FlashProfile>(
-                                egui::Id::new("loaded_profile"),
-                                profile,
-                            );
-                        });
+                    match load_profile(&path.to_string_lossy()) {
+                        Ok(p) => {
+                            loaded_msg = Some((
+                                format!(
+                                    "[*] Loaded profile '{}' ({} operation(s)).",
+                                    p.name,
+                                    p.operations.len()
+                                ),
+                                Color32::LIGHT_BLUE,
+                            ));
+                        }
+                        Err(e) => {
+                            loaded_msg =
+                                Some((format!("[ERROR] Load profile: {}", e), Color32::RED));
+                        }
                     }
                 }
             }
         }
     }
+    if let Some((msg, color)) = loaded_msg {
+        state.push_log(msg, color);
+    }
 
     ui.add_space(8.0);
-    ui.button("Save Current Config").clicked();
-    ui.button("Export Profile").clicked();
-    if ui.button("Import Profile").clicked() {}
+    if ui.button("Export Profile").clicked() {
+        *action = Some(Action::ExportProfile);
+    }
+    if ui.button("Import Profile").clicked() {
+        *action = Some(Action::ImportProfile);
+    }
+    ui.add_space(6.0);
+    ui.label(RichText::new(format!("Dir: {}", profiles_dir.display())).small());
 }
 
 fn dirs_profiles() -> std::path::PathBuf {
@@ -89,6 +97,7 @@ fn dirs_profiles() -> std::path::PathBuf {
 
 fn render_fastboot_ops(
     ui: &mut egui::Ui,
+    state: &mut AppState,
     is_fastboot: bool,
     disable: bool,
     action: &mut Option<Action>,
@@ -100,10 +109,12 @@ fn render_fastboot_ops(
         ui.separator();
         ui.add_enabled_ui(is_fastboot && !disable, |ui| {
             if ui.button("Unlock Bootloader").clicked() {
-                *action = Some(Action::UnlockBootloader);
+                *action = Some(Action::Confirm(
+                    crate::state::PendingAction::UnlockBootloader,
+                ));
             }
             if ui.button("Lock Bootloader").clicked() {
-                *action = Some(Action::LockBootloader);
+                *action = Some(Action::Confirm(crate::state::PendingAction::LockBootloader));
             }
             if ui.button("Flash Recovery Image").clicked() {
                 *action = Some(Action::FlashRecovery);
@@ -112,7 +123,7 @@ fn render_fastboot_ops(
                 if ui.button("Flash Boot Image").clicked() {
                     *action = Some(Action::FlashBoot);
                 }
-                ui.checkbox(&mut false, "Patch with Magisk");
+                ui.checkbox(&mut state.magisk_patch, "Patch with Magisk");
             });
         });
     });
@@ -149,21 +160,15 @@ fn render_adb_ops(
     });
 }
 
-fn render_batch_panel(
-    ui: &mut egui::Ui,
-    state: &AppState,
-    has_device: bool,
-    disable: bool,
-    _action: &mut Option<Action>,
-) {
+fn render_batch_panel(ui: &mut egui::Ui, state: &AppState, has_device: bool, disable: bool) {
     ui.collapsing("Batch Operations", |ui| {
         ui.add_enabled_ui(has_device && !disable, |ui| {
-            ui.label("Connected devices:");
-            ui.label(format!(
-                "  1 device: {} ({})",
-                state.device_serial, state.device_mode
-            ));
-            ui.label("Multi-device selection available in Phase 3.");
+            ui.label("Connected device:");
+            if state.device_serial == "N/A" {
+                ui.label("  (none)");
+            } else {
+                ui.label(format!("  {} ({})", state.device_serial, state.device_mode));
+            }
         });
     });
 }

@@ -1,7 +1,12 @@
 use super::{Action, AppState};
-use egui::RichText;
+use egui::{Color32, RichText};
 
-pub fn render(ui: &mut egui::Ui, _state: &AppState, _action: &mut Option<Action>, _disable: bool) {
+pub fn render(
+    ui: &mut egui::Ui,
+    state: &mut AppState,
+    action: &mut Option<Action>,
+    _disable: bool,
+) {
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.group(|ui| {
             ui.vertical_centered(|ui| {
@@ -9,7 +14,13 @@ pub fn render(ui: &mut egui::Ui, _state: &AppState, _action: &mut Option<Action>
             });
             ui.separator();
             ui.label("Auto-detect interval: 3s");
-            ui.label("Backup location: ~/.androidtool/backups");
+            ui.label(format!(
+                "Backup location: {}",
+                crate::safety::backup::backup_dir().display()
+            ));
+            if ui.button("Save Settings").clicked() {
+                *action = Some(Action::SaveSettings);
+            }
         });
 
         ui.add_space(10.0);
@@ -18,10 +29,16 @@ pub fn render(ui: &mut egui::Ui, _state: &AppState, _action: &mut Option<Action>
                 ui.label(RichText::new("Compliance").strong());
             });
             ui.separator();
-            let mut geo_locked = false;
             ui.checkbox(
-                &mut geo_locked,
+                &mut state.compliance_mode,
                 "Disable exploit features (compliance mode)",
+            );
+            ui.label(
+                RichText::new(
+                    "When enabled, the exploit/bypass database on the Protocols tab is hidden.",
+                )
+                .small()
+                .color(Color32::GRAY),
             );
         });
 
@@ -33,17 +50,22 @@ pub fn render(ui: &mut egui::Ui, _state: &AppState, _action: &mut Option<Action>
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label("IP:");
-                let mut ip = String::from("192.168.1.");
-                ui.text_edit_singleline(&mut ip);
+                ui.add(egui::TextEdit::singleline(&mut state.wifi_ip).desired_width(140.0));
                 ui.label("Port:");
-                let mut port = String::from("5555");
-                ui.add_sized([60.0, 20.0], egui::TextEdit::singleline(&mut port));
+                ui.add_sized(
+                    [60.0, 20.0],
+                    egui::TextEdit::singleline(&mut state.wifi_port),
+                );
             });
             ui.horizontal(|ui| {
-                ui.button("Connect").clicked();
-                if ui.button("Disconnect").clicked() {}
+                if ui.button("Connect").clicked() {
+                    *action = Some(Action::WifiConnect);
+                }
+                if ui.button("Disconnect").clicked() {
+                    *action = Some(Action::WifiDisconnect);
+                }
             });
-            ui.label("Status: Not connected");
+            ui.label(format!("Status: {}", state.wifi_status));
         });
 
         ui.add_space(10.0);
@@ -54,11 +76,28 @@ pub fn render(ui: &mut egui::Ui, _state: &AppState, _action: &mut Option<Action>
             ui.separator();
             if ui.button("Generate Dockerfile").clicked() {
                 let content = crate::network::wifi_adb::generate_dockerfile();
-                std::fs::write("Dockerfile", content).ok();
+                match std::fs::write("Dockerfile", content) {
+                    Ok(()) => state.push_log(
+                        "[*] Wrote Dockerfile to current directory.".into(),
+                        Color32::LIGHT_BLUE,
+                    ),
+                    Err(e) => {
+                        state.push_log(format!("[ERROR] Write Dockerfile: {}", e), Color32::RED)
+                    }
+                }
             }
             if ui.button("Generate docker-compose.yml").clicked() {
                 let content = crate::network::docker::generate_compose();
-                std::fs::write("docker-compose.yml", content).ok();
+                match std::fs::write("docker-compose.yml", content) {
+                    Ok(()) => state.push_log(
+                        "[*] Wrote docker-compose.yml to current directory.".into(),
+                        Color32::LIGHT_BLUE,
+                    ),
+                    Err(e) => state.push_log(
+                        format!("[ERROR] Write docker-compose.yml: {}", e),
+                        Color32::RED,
+                    ),
+                }
             }
         });
 
@@ -70,15 +109,25 @@ pub fn render(ui: &mut egui::Ui, _state: &AppState, _action: &mut Option<Action>
             ui.separator();
             ui.collapsing("Action Log Entries", |ui| {
                 let entries = crate::safety::audit::read_action_log();
+                let verified = crate::safety::audit::verify_chain(&entries);
+                ui.label(
+                    RichText::new(if verified {
+                        "Hash chain: verified"
+                    } else {
+                        "Hash chain: TAMPERED"
+                    })
+                    .color(if verified {
+                        Color32::from_rgb(40, 140, 40)
+                    } else {
+                        Color32::RED
+                    }),
+                );
                 for e in &entries {
                     ui.label(format!("[{}] {} on {}", e.timestamp, e.action, e.serial));
                 }
                 if entries.is_empty() {
                     ui.label("No actions logged yet.");
                 }
-            });
-            ui.collapsing("Consent History", |ui| {
-                ui.label("Consent records logged with each action.");
             });
         });
 
@@ -89,8 +138,7 @@ pub fn render(ui: &mut egui::Ui, _state: &AppState, _action: &mut Option<Action>
             });
             ui.separator();
             ui.label("AndroKit");
-            ui.label("Version: 0.4.0");
-            ui.label("Author: Eliott");
+            ui.label(format!("Version: {}", env!("CARGO_PKG_VERSION")));
             ui.label("License: GPLv3");
         });
     });

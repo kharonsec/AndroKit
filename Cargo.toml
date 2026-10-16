@@ -1,7 +1,13 @@
 [package]
 name = "androkit"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
+description = "Cross-platform GUI front-end for ADB and Fastboot device operations."
+license = "GPL-3.0-or-later"
+repository = "https://github.com/kharonsec/androkit"
+readme = "README.md"
+keywords = ["android", "adb", "fastboot", "gui"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 eframe = "0.27"

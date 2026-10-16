@@ -3,7 +3,7 @@ use egui::{Color32, RichText};
 
 pub fn render(
     ui: &mut egui::Ui,
-    state: &AppState,
+    state: &mut AppState,
     action: &mut Option<Action>,
     disable_actions: bool,
 ) {
@@ -71,13 +71,4 @@ pub fn render(
             }
         }
     }
-
-    ui.add_space(20.0);
-    ui.label(
-        RichText::new("Phase 2 Preview")
-            .strong()
-            .color(Color32::GRAY),
-    );
-    ui.label("  Natural language command input");
-    ui.label("  AI-powered device database");
 }
