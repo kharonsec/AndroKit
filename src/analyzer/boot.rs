@@ -37,3 +37,44 @@ pub fn parse_boot_header(data: &[u8]) -> Result<BootImageInfo, String> {
         has_dtb: get_u32(40) > 0,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_boot() -> Vec<u8> {
+        let mut data = vec![0u8; 2048];
+        data[0..8].copy_from_slice(b"ANDROID!");
+        data[8..12].copy_from_slice(&1024u32.to_le_bytes()); // kernel_size
+        data[12..16].copy_from_slice(&0x8000u32.to_le_bytes()); // kernel_addr
+        data[16..20].copy_from_slice(&2048u32.to_le_bytes()); // ramdisk_size
+        data[36..40].copy_from_slice(&2048u32.to_le_bytes()); // page_size
+        data[40..44].copy_from_slice(&1u32.to_le_bytes()); // dt size -> has_dtb
+        let cmdline = b"console=ttyMSM0";
+        data[64..64 + cmdline.len()].copy_from_slice(cmdline);
+        data
+    }
+
+    #[test]
+    fn parses_valid_header() {
+        let info = parse_boot_header(&sample_boot()).expect("should parse");
+        assert_eq!(info.kernel_size, 1024);
+        assert_eq!(info.kernel_addr, 0x8000);
+        assert_eq!(info.ramdisk_size, 2048);
+        assert_eq!(info.page_size, 2048);
+        assert!(info.has_dtb);
+        assert_eq!(info.cmdline, "console=ttyMSM0");
+    }
+
+    #[test]
+    fn rejects_bad_magic() {
+        let mut data = sample_boot();
+        data[0] = b'X';
+        assert!(parse_boot_header(&data).is_err());
+    }
+
+    #[test]
+    fn rejects_too_small() {
+        assert!(parse_boot_header(&[0u8; 100]).is_err());
+    }
+}

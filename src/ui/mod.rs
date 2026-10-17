@@ -48,7 +48,7 @@ pub const TABS: &[Tab] = &[
 pub fn render_tab_content(
     ui: &mut egui::Ui,
     tab_index: usize,
-    state: &AppState,
+    state: &mut AppState,
     action: &mut Option<Action>,
     disable_actions: bool,
 ) {
@@ -62,4 +62,50 @@ pub fn render_tab_content(
         6 => settings::render(ui, state, action, disable_actions),
         _ => {}
     }
+}
+
+/// Render the bottom log console: filter box, autoscroll/clear controls, and
+/// the scrollable, color-coded output of commands and streams.
+pub fn render_log_console(ui: &mut egui::Ui, state: &mut AppState, action: &mut Option<Action>) {
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Console").strong());
+        ui.separator();
+        ui.label("Filter:");
+        ui.add(
+            egui::TextEdit::singleline(&mut state.log_filter)
+                .hint_text("substring")
+                .desired_width(160.0),
+        );
+        ui.checkbox(&mut state.log_autoscroll, "Autoscroll");
+        if ui.button("Clear").clicked() {
+            *action = Some(Action::ClearLogs);
+        }
+        if ui.button("Copy").clicked() {
+            let joined = state
+                .logs
+                .iter()
+                .map(|(t, _)| t.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            ui.ctx().copy_text(joined);
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(egui::RichText::new(format!("{} lines", state.logs.len())).small());
+        });
+    });
+    ui.separator();
+
+    let filter = state.log_filter.to_lowercase();
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .stick_to_bottom(state.log_autoscroll)
+        .show(ui, |ui| {
+            ui.style_mut().wrap = Some(false);
+            for (line, color) in &state.logs {
+                if filter.is_empty() || line.to_lowercase().contains(&filter) {
+                    ui.label(egui::RichText::new(line).monospace().color(*color));
+                }
+            }
+        });
 }

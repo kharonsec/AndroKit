@@ -47,6 +47,19 @@ pub fn read_action_log() -> Vec<AuditEntry> {
     read_log(&audit_path())
 }
 
+/// Verify the hash chain: each entry's `prev_hash` must equal the hash of the
+/// entry before it (the first links to "genesis"). An empty log is valid.
+pub fn verify_chain(entries: &[AuditEntry]) -> bool {
+    let mut prev = "genesis".to_string();
+    for entry in entries {
+        if entry.prev_hash != prev {
+            return false;
+        }
+        prev = entry.hash();
+    }
+    true
+}
+
 fn audit_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     let dir = PathBuf::from(home).join(".androidtool");
@@ -82,4 +95,38 @@ fn chrono_now() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs().to_string())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_chain_is_valid() {
+        assert!(verify_chain(&[]));
+    }
+
+    #[test]
+    fn well_formed_chain_verifies() {
+        let e1 = AuditEntry::new("unlock", "serial1", "genesis");
+        let e2 = AuditEntry::new("wipe", "serial1", &e1.hash());
+        let e3 = AuditEntry::new("backup", "serial1", &e2.hash());
+        assert!(verify_chain(&[e1, e2, e3]));
+    }
+
+    #[test]
+    fn tampered_entry_breaks_chain() {
+        let e1 = AuditEntry::new("unlock", "serial1", "genesis");
+        let mut e2 = AuditEntry::new("wipe", "serial1", &e1.hash());
+        let e3 = AuditEntry::new("backup", "serial1", &e2.hash());
+        // Tamper with e2's action after e3 was linked to its original hash.
+        e2.action = "innocent".into();
+        assert!(!verify_chain(&[e1, e2, e3]));
+    }
+
+    #[test]
+    fn broken_genesis_link_fails() {
+        let e1 = AuditEntry::new("unlock", "serial1", "not-genesis");
+        assert!(!verify_chain(&[e1]));
+    }
 }
